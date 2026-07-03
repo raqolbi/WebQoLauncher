@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Interactive setup wizard — buat .env per aplikasi
+# Interactive setup wizard — tanya nama app & port ke user, buat .env otomatis
 
 set -euo pipefail
 
@@ -7,75 +7,127 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/apps.sh"
 
-prompt_line() {
-  local label="$1" default="${2:-}" answer
-  if [[ -n "${default}" ]]; then
-    printf '%s [%s]: ' "${label}" "${default}"
-  else
-    printf '%s: ' "${label}"
-  fi
-  IFS= read -r answer || answer=""
-  if [[ -z "${answer}" && -n "${default}" ]]; then
-    answer="${default}"
-  fi
+prompt_required() {
+  local label="$1" default="${2:-}" answer=""
+  while [[ -z "${answer}" ]]; do
+    if [[ -n "${default}" ]]; then
+      printf '%s [%s]: ' "${label}" "${default}"
+    else
+      printf '%s: ' "${label}"
+    fi
+    IFS= read -r answer || answer=""
+    if [[ -z "${answer}" && -n "${default}" ]]; then
+      answer="${default}"
+    fi
+    if [[ -z "${answer}" ]]; then
+      warn "Wajib diisi."
+    fi
+  done
   printf '%s' "${answer}"
 }
 
+prompt_port() {
+  local label="$1" default="$2" answer=""
+  while true; do
+    answer="$(prompt_required "${label}" "${default}")"
+    if [[ "${answer}" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 65535 )); then
+      printf '%s' "${answer}"
+      return 0
+    fi
+    warn "Port harus angka 1–65535."
+  done
+}
+
+port_is_taken() {
+  local port="$1" exclude_folder="${2:-}"
+  local other_folder other_env other_port
+  while IFS= read -r other_folder; do
+    [[ "${other_folder}" == "${exclude_folder}" ]] && continue
+    other_env="$(app_dir_for "${other_folder}")/.env"
+    [[ -f "${other_env}" ]] || continue
+    other_port="$(env_get "${other_env}" "PORT_APP")"
+    [[ "${other_port}" == "${port}" ]] && return 0
+  done < <(app_list_folders)
+  return 1
+}
+
+ask_unique_port() {
+  local exclude_folder="${1:-}" suggested
+  suggested="$(app_suggest_port 3101)"
+  local port
+  while true; do
+    port="$(prompt_port "Port aplikasi" "${suggested}")"
+    if port_is_taken "${port}" "${exclude_folder}"; then
+      warn "Port ${port} sudah dipakai aplikasi lain. Pilih port lain."
+      suggested="$(app_suggest_port $((port + 1)))"
+    else
+      printf '%s' "${port}"
+      return 0
+    fi
+  done
+}
+
+# Tanya nama & port secara interaktif, lalu tulis .env
 setup_one_app() {
   local folder="$1"
-  local default_name default_port app_name port_app
+  local default_name app_name port_app
 
   default_name="$(app_display_name "${folder}")"
   if [[ "${default_name}" == "${folder}" ]]; then
-    default_name="${folder//-/ }"
-    default_name="$(echo "${default_name}" | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}')"
+    default_name="$(app_title_from_folder "${folder}")"
   fi
 
-  default_port="$(app_suggest_port 3101)"
-
   echo
-  printf '── Setup: %s ──\n' "${folder}"
+  echo "══════════════════════════════════════"
+  printf '  Setup aplikasi: %s\n' "${folder}"
+  echo "══════════════════════════════════════"
+  echo "  Isi nama dan port aplikasi di bawah."
+  echo
 
-  app_name="$(prompt_line "APP_NAME" "${default_name}")"
-  while [[ -z "${app_name}" ]]; do
-    warn "APP_NAME wajib diisi"
-    app_name="$(prompt_line "APP_NAME" "${default_name}")"
-  done
-
-  port_app="$(prompt_line "PORT_APP" "${default_port}")"
-  while [[ -z "${port_app}" ]] || ! [[ "${port_app}" =~ ^[0-9]+$ ]]; do
-    warn "PORT_APP harus angka"
-    port_app="$(prompt_line "PORT_APP" "${default_port}")"
-  done
-
-  # Pastikan port unik
-  while true; do
-    local conflict=false
-    while IFS= read -r other_folder; do
-      [[ "${other_folder}" == "${folder}" ]] && continue
-      other_env="$(app_dir_for "${other_folder}")/.env"
-      [[ -f "${other_env}" ]] || continue
-      other_port="$(env_get "${other_env}" "PORT_APP")"
-      if [[ "${other_port}" == "${port_app}" ]]; then
-        conflict=true
-        break
-      fi
-    done < <(app_list_folders)
-
-    if [[ "${conflict}" == "false" ]]; then
-      break
-    fi
-
-    warn "Port ${port_app} sudah dipakai app lain"
-    default_port="$(app_suggest_port $((port_app + 1)))"
-    port_app="$(prompt_line "PORT_APP (unik)" "${default_port}")"
-    while [[ -z "${port_app}" ]] || ! [[ "${port_app}" =~ ^[0-9]+$ ]]; do
-      warn "PORT_APP harus angka"
-      port_app="$(prompt_line "PORT_APP (unik)" "${default_port}")"
-    done
-  done
+  app_name="$(prompt_required "Nama aplikasi" "${default_name}")"
+  port_app="$(ask_unique_port "${folder}")"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
+
+  echo
+  log "✓ ${app_name} → folder apps/${folder}, port ${port_app}"
+}
+
+setup_new_app() {
+  local app_name port_app folder
+
+  echo
+  echo "══════════════════════════════════════"
+  echo "  Tambah Aplikasi Baru"
+  echo "══════════════════════════════════════"
+  echo "  Isi nama dan port aplikasi. Folder di apps/ dibuat otomatis."
+  echo
+
+  app_name="$(prompt_required "Nama aplikasi")"
+  port_app="$(ask_unique_port)"
+  folder="$(app_folder_from_name "${app_name}")"
+
+  app_write_env "${folder}" "${app_name}" "${port_app}"
+
+  echo
+  log "✓ ${app_name} → apps/${folder}/, port ${port_app}"
+  warn "Jangan lupa tambahkan docker-compose.yml di apps/${folder}/"
+}
+
+offer_reload() {
+  echo
+  printf 'Jalankan scan & reload launcher sekarang? [Y/n]: '
+  local reload_choice
+  IFS= read -r reload_choice || reload_choice=""
+  if [[ -z "${reload_choice}" || "${reload_choice}" =~ ^[Yy] ]]; then
+    "${SCRIPT_DIR}/scan.sh"
+    "${SCRIPT_DIR}/generate-nginx.sh"
+    "${SCRIPT_DIR}/generate-html.sh"
+    if launcher_is_running; then
+      docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
+      log "Nginx reloaded"
+    fi
+  fi
 }
 
 cmd_setup_interactive() {
@@ -91,36 +143,49 @@ cmd_setup_interactive() {
     fi
   done < <(app_list_folders)
 
+  echo
+  echo "╔══════════════════════════════════════╗"
+  echo "║         Setup Aplikasi               ║"
+  echo "╚══════════════════════════════════════╝"
+  echo
+  echo "  Setiap aplikasi akan ditanyakan:"
+  echo "    • Nama aplikasi"
+  echo "    • Port aplikasi"
+  echo
+
   if ((${#needs_setup[@]} == 0)); then
-    log "Semua aplikasi di apps/ sudah punya .env lengkap."
-    printf 'Buat folder baru di apps/ lalu jalankan Setup lagi, atau ketik nama folder baru: '
-    local new_folder
-    IFS= read -r new_folder || new_folder=""
-    new_folder="$(echo "${new_folder}" | tr -d '[:space:]')"
-    if [[ -z "${new_folder}" ]]; then
-      return 0
+    echo "  Semua folder di apps/ sudah punya .env lengkap."
+    echo
+    printf '  Tambah aplikasi baru? [Y/n]: '
+    local add_new
+    IFS= read -r add_new || add_new=""
+    if [[ -z "${add_new}" || "${add_new}" =~ ^[Yy] ]]; then
+      setup_new_app
+      offer_reload
     fi
-    if [[ ! "${new_folder}" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
-      die "Nama folder tidak valid: ${new_folder}"
-    fi
-    needs_setup=("${new_folder}")
+    return 0
   fi
 
-  echo
-  echo "Aplikasi yang perlu setup:"
+  echo "  0) + Tambah aplikasi baru"
   local i=1
   for folder in "${needs_setup[@]}"; do
     local reason="belum ada .env"
     if app_has_env "${folder}"; then
-      reason=".env tidak lengkap"
+      reason=".env belum lengkap"
     fi
-    printf '  %d) %s (%s)\n' "${i}" "${folder}" "${reason}"
+    printf '  %d) %s — %s\n' "${i}" "${folder}" "${reason}"
     i=$((i + 1))
   done
   echo
-  printf 'Pilih yang akan di-setup (all / nomor / 1,3): '
+  printf 'Pilih (0=baru / all=semua / nomor / 1,3): '
   local choice
   IFS= read -r choice || choice=""
+
+  if [[ "${choice}" == "0" ]]; then
+    setup_new_app
+    offer_reload
+    return 0
+  fi
 
   local selected=()
   app_parse_selection "${choice}" needs_setup selected || die "Pilihan tidak valid"
@@ -131,18 +196,7 @@ cmd_setup_interactive() {
 
   echo
   log "Setup selesai untuk ${#selected[@]} aplikasi."
-  printf 'Jalankan scan & reload launcher sekarang? [Y/n]: '
-  local reload_choice
-  IFS= read -r reload_choice || reload_choice=""
-  if [[ -z "${reload_choice}" || "${reload_choice}" =~ ^[Yy] ]]; then
-    "${SCRIPT_DIR}/scan.sh"
-    "${SCRIPT_DIR}/generate-nginx.sh"
-    "${SCRIPT_DIR}/generate-html.sh"
-    if launcher_is_running; then
-      docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
-      log "Nginx reloaded"
-    fi
-  fi
+  offer_reload
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

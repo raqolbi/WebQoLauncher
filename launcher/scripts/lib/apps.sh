@@ -176,6 +176,36 @@ EOF
   log "Dibuat ${env_file}"
 }
 
+# Slug untuk nama folder dari nama aplikasi, mis. "Point Of Sale" → "point-of-sale"
+app_slug_from_name() {
+  local s="$1"
+  s="$(printf '%s' "${s}" | tr '[:upper:]' '[:lower:]')"
+  s="$(printf '%s' "${s}" | sed 's/[^a-z0-9_-]/-/g; s/-\+/-/g; s/^-//; s/-$//')"
+  printf '%s' "${s}"
+}
+
+app_title_from_folder() {
+  local folder="$1"
+  printf '%s' "${folder}" | tr '-' ' ' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}'
+}
+
+# Folder otomatis dari nama aplikasi; tambah suffix jika sudah ada & terkonfigurasi
+app_folder_from_name() {
+  local app_name="$1"
+  local base folder n=2
+
+  base="$(app_slug_from_name "${app_name}")"
+  [[ -n "${base}" ]] || base="app"
+
+  folder="${base}"
+  while [[ -d "$(app_dir_for "${folder}")" ]] && app_env_complete "${folder}"; do
+    folder="${base}-${n}"
+    n=$((n + 1))
+  done
+
+  printf '%s' "${folder}"
+}
+
 # Parse selection: "all", "1", "1,3", "1 3"
 # $1=input  $2=name of array variable for folder names (must be pre-filled list)
 app_parse_selection() {

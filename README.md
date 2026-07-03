@@ -122,14 +122,18 @@ Jalankan tanpa argumen atau `./launcher.sh menu`:
 
 ### Setup wizard
 
-Menu **Setup** mendeteksi folder di `apps/` yang belum punya `.env` lengkap:
+Menu **Setup** menanyakan secara interaktif untuk setiap aplikasi:
 
-1. Pilih app yang akan di-setup (`all` / nomor / `1,3`)
-2. Isi **APP_NAME** dan **PORT_APP** (port default disarankan otomatis, cek bentrok)
-3. File `.env` dibuat otomatis di folder app (`APP_PATH` = nama folder)
-4. Opsional: scan + reload nginx langsung
+1. **Nama aplikasi** — tampilan di launcher (wajib)
+2. **Port aplikasi** — port host, disarankan otomatis & dicek bentrok (wajib)
 
-Jika semua app sudah terkonfigurasi, wizard menawarkan membuat folder app baru.
+Alur:
+
+- Folder di `apps/` tanpa `.env` → pilih dari daftar (atau `0` untuk app baru)
+- Setiap app yang dipilih → prompt **Nama aplikasi** lalu **Port aplikasi**
+- App baru → tanya **Nama aplikasi** & **Port aplikasi** saja; folder `apps/` dibuat otomatis dari nama (mis. `Point Of Sale` → `point-of-sale`)
+- File `.env` dibuat otomatis (`APP_PATH` = nama folder)
+- Opsional: scan + reload nginx di akhir
 
 ## Perintah CLI
 
