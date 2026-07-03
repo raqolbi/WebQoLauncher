@@ -18,6 +18,7 @@ Commands:
   stop        Stop launcher nginx and all apps
   restart     stop then start
   reload      Rescan, regenerate configs, reload nginx (start new apps if needed)
+  sync-nginx  Update nginx.conf semua app dari template + pastikan mount di compose
   setup       Interactive wizard to create .env per app
   scan        Scan apps/ and write manifest only
   status      Show running containers for launcher and apps
@@ -64,6 +65,19 @@ cmd_reload() {
   "${SCRIPT_DIR}/start-apps.sh"
 }
 
+cmd_sync_nginx() {
+  source "${SCRIPT_DIR}/lib/apps.sh"
+  local force="${1:-false}"
+  if [[ "${force}" == "--force" ]]; then
+    force=true
+  else
+    force=false
+  fi
+  app_sync_all_nginx "${force}"
+  log "Selesai. Recreate container yang berjalan:"
+  log "  cd apps/<nama> && docker compose up -d --force-recreate"
+}
+
 cmd_status() {
   source "${SCRIPT_DIR}/lib/apps.sh"
   print_full_status
@@ -78,8 +92,9 @@ main() {
     start)   cmd_start "$@" ;;
     stop)    cmd_stop "$@" ;;
     restart) cmd_restart "$@" ;;
-    reload)  cmd_reload "$@" ;;
-    scan)    cmd_scan "$@" ;;
+    reload)      cmd_reload "$@" ;;
+    sync-nginx)  cmd_sync_nginx "$@" ;;
+    scan)        cmd_scan "$@" ;;
     setup)   bash "${SCRIPT_DIR}/setup.sh" ;;
     status)  cmd_status "$@" ;;
     help|-h|--help) usage ;;

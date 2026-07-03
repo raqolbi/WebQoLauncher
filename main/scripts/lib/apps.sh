@@ -76,34 +76,81 @@ app_container_name() {
   printf 'webqo-app-%s' "${folder//[^a-zA-Z0-9_.-]/-}"
 }
 
-app_write_nginx_conf() {
+APP_NGINX_MARKER='@generated webqolauncher v2'
+
+app_nginx_needs_sync() {
   local folder="$1"
+  local nginx_conf
+  nginx_conf="$(app_dir_for "${folder}")/nginx.conf"
+  [[ ! -f "${nginx_conf}" ]] && return 0
+  grep -qF "${APP_NGINX_MARKER}" "${nginx_conf}" || return 0
+  return 1
+}
+
+# Salin template nginx ke app. force=true selalu timpa; default hanya jika belum ada / versi lama.
+app_sync_nginx_conf() {
+  local folder="$1"
+  local force="${2:-false}"
   local app_dir nginx_conf template
   app_dir="$(app_dir_for "${folder}")"
   nginx_conf="${app_dir}/nginx.conf"
   template="${MAIN_DIR}/templates/app-nginx.conf"
-
-  if [[ -f "${nginx_conf}" ]]; then
-    return 0
-  fi
 
   if [[ ! -f "${template}" ]]; then
     warn "Template tidak ditemukan: ${template}"
     return 1
   fi
 
+  if [[ "${force}" != "true" ]] && [[ -f "${nginx_conf}" ]] && ! app_nginx_needs_sync "${folder}"; then
+    return 0
+  fi
+
+  if [[ -f "${nginx_conf}" ]] && ! grep -qF "${APP_NGINX_MARKER}" "${nginx_conf}"; then
+    cp "${nginx_conf}" "${nginx_conf}.bak"
+    log "Backup ${nginx_conf} → ${nginx_conf}.bak"
+  fi
+
   cp "${template}" "${nginx_conf}"
   chmod 644 "${nginx_conf}"
-  log "Dibuat ${nginx_conf} (Next.js / SPA fallback)"
+  log "Synced ${nginx_conf} (Next.js / SPA fallback)"
+}
+
+app_write_nginx_conf() {
+  app_sync_nginx_conf "$1" false
+}
+
+# Pastikan docker-compose mount nginx.conf (perbaiki compose lama seperti ho-fe).
+# Return 0 = sudah OK, 1 = gagal, 2 = baru ditambahkan (perlu recreate container).
+app_ensure_nginx_mount() {
+  local folder="$1"
+  local compose_file
+  compose_file="$(app_dir_for "${folder}")/docker-compose.yml"
+  [[ -f "${compose_file}" ]] || return 0
+
+  if grep -q 'nginx\.conf:/etc/nginx/conf.d/default.conf' "${compose_file}"; then
+    return 0
+  fi
+
+  if grep -q './public:/usr/share/nginx/html' "${compose_file}"; then
+    sed -i '/\.\/public:\/usr\/share\/nginx\/html/a\      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro' "${compose_file}"
+    log "Menambahkan mount nginx.conf ke ${compose_file}"
+    return 2
+  fi
+
+  warn "docker-compose.yml ${folder}: tambahkan manual: - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro"
+  return 1
 }
 
 # Template docker-compose + public/ untuk app baru (bisa diganti user nanti)
+# force=true → timpa docker-compose.yml dari template (nginx.conf selalu di-sync)
 app_write_compose_stub() {
   local folder="$1"
-  local app_dir public_dir index_file cname
+  local force="${2:-false}"
+  local app_dir public_dir index_file cname compose_file
   app_dir="$(app_dir_for "${folder}")"
   public_dir="${app_dir}/public"
   index_file="${public_dir}/index.html"
+  compose_file="${app_dir}/docker-compose.yml"
   cname="$(app_container_name "${folder}")"
 
   mkdir -p "${public_dir}"
@@ -125,13 +172,19 @@ EOF
     chmod 644 "${index_file}"
   fi
 
-  app_write_nginx_conf "${folder}"
+  app_sync_nginx_conf "${folder}" "${force}"
 
-  if [[ -f "${app_dir}/docker-compose.yml" ]]; then
+  if [[ -f "${compose_file}" && "${force}" != "true" ]]; then
+    app_ensure_nginx_mount "${folder}" || true
     return 0
   fi
 
-  cat > "${app_dir}/docker-compose.yml" <<EOF
+  if [[ -f "${compose_file}" && "${force}" == "true" ]]; then
+    cp "${compose_file}" "${compose_file}.bak"
+    log "Backup ${compose_file} → ${compose_file}.bak"
+  fi
+
+  cat > "${compose_file}" <<EOF
 services:
   app:
     image: nginx:1.27-alpine
@@ -143,18 +196,74 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
 EOF
-  chmod 644 "${app_dir}/docker-compose.yml"
-  log "Dibuat ${app_dir}/docker-compose.yml (+ nginx.conf Next.js)"
+  chmod 644 "${compose_file}"
+  log "Dibuat ${compose_file} (+ nginx.conf Next.js)"
+}
+
+# Regenerate nginx.conf + docker-compose.yml dari template (tanpa ubah .env / public/)
+app_regenerate_files() {
+  local folder="$1"
+  local force_compose="${2:-true}"
+  app_env_complete "${folder}" || die "App ${folder} belum dikonfigurasi (.env)"
+  app_sync_nginx_conf "${folder}" true
+  app_write_compose_stub "${folder}" "${force_compose}"
+  log "Regenerate selesai: apps/${folder}/ (nginx.conf + docker-compose.yml)"
+}
+
+app_recreate() {
+  local folder="$1"
+  local app_dir
+  app_dir="$(app_dir_for "${folder}")"
+  app_has_compose "${folder}" || return 0
+  log "Recreate container $(app_display_name "${folder}") (${folder})..."
+  (cd "${app_dir}" && docker compose up -d --force-recreate)
+}
+
+# Jalankan Docker setelah setup: buat container baru atau recreate jika sudah ada
+app_deploy() {
+  local folder="$1"
+  local app_dir port
+  app_dir="$(app_dir_for "${folder}")"
+
+  app_env_complete "${folder}" || die "App ${folder} belum dikonfigurasi (.env)"
+  app_has_compose "${folder}" || die "App ${folder} tidak punya docker-compose.yml"
+  port="$(app_port "${folder}")"
+
+  if app_is_running "${folder}"; then
+    log "Recreate container $(app_display_name "${folder}") (${folder})..."
+    if ! (cd "${app_dir}" && docker compose up -d --force-recreate); then
+      warn "Gagal recreate ${folder} — cek: cd apps/${folder} && docker compose up -d --force-recreate"
+      return 1
+    fi
+  else
+    log "Membuat & menjalankan container $(app_display_name "${folder}") (${folder})..."
+    if ! (cd "${app_dir}" && docker compose up -d); then
+      warn "Gagal start ${folder} — cek: cd apps/${folder} && docker compose up -d"
+      return 1
+    fi
+  fi
+  log "App aktif → http://localhost:${port}"
 }
 
 app_ensure_compose() {
   local folder="$1"
-  app_write_nginx_conf "${folder}" || true
+  app_sync_nginx_conf "${folder}" false || true
   if app_has_compose "${folder}"; then
+    app_ensure_nginx_mount "${folder}" || true
     return 0
   fi
   warn "App ${folder} belum punya docker-compose.yml — membuat template otomatis."
   app_write_compose_stub "${folder}"
+}
+
+app_sync_all_nginx() {
+  local force="${1:-false}" folder
+  while IFS= read -r folder; do
+    [[ -n "${folder}" ]] || continue
+    app_env_complete "${folder}" || continue
+    app_sync_nginx_conf "${folder}" "${force}"
+    app_ensure_nginx_mount "${folder}" || true
+  done < <(app_list_folders)
 }
 
 app_compose_ps() {
@@ -261,14 +370,31 @@ app_status_label() {
 
 app_start() {
   local folder="$1"
-  local app_dir
+  local app_dir recreate=false mount_rc
   app_dir="$(app_dir_for "${folder}")"
 
   app_env_complete "${folder}" || die "App ${folder} belum dikonfigurasi (.env)"
   app_ensure_compose "${folder}"
 
+  if app_nginx_needs_sync "${folder}"; then
+    app_sync_nginx_conf "${folder}" true
+    recreate=true
+  fi
+
+  mount_rc=0
+  app_ensure_nginx_mount "${folder}" || mount_rc=$?
+  if (( mount_rc == 2 )); then
+    recreate=true
+  fi
+
   log "Starting $(app_display_name "${folder}") (${folder})..."
-  if ! (cd "${app_dir}" && docker compose up -d); then
+  if [[ "${recreate}" == "true" ]]; then
+    log "Recreate container (nginx.conf / compose diperbarui)..."
+    if ! (cd "${app_dir}" && docker compose up -d --force-recreate); then
+      warn "Gagal start ${folder} — cek: cd apps/${folder} && docker compose up -d --force-recreate"
+      return 1
+    fi
+  elif ! (cd "${app_dir}" && docker compose up -d); then
     warn "Gagal start ${folder} — cek: cd apps/${folder} && docker compose up -d"
     return 1
   fi

@@ -4,6 +4,7 @@
 set -euo pipefail
 
 source "$(dirname "$0")/lib/common.sh"
+source "$(dirname "$0")/lib/apps.sh"
 
 if [[ ! -f "${MANIFEST}" ]]; then
   die "Manifest not found. Run scan.sh first."
@@ -20,22 +21,14 @@ failed=0
 while IFS=$'\t' read -r folder app_name port_app app_path app_desc app_icon app_spa; do
   [[ -n "${folder}" ]] || continue
 
-  app_dir="${APPS_DIR}/${folder}"
-  compose_file="${app_dir}/docker-compose.yml"
+  app_sync_nginx_conf "${folder}" false || true
+  app_ensure_nginx_mount "${folder}" || true
 
-  if [[ ! -f "${compose_file}" ]]; then
-    warn "Skipping ${folder}: missing docker-compose.yml"
+  if ! app_start "${folder}"; then
     failed=$((failed + 1))
     continue
   fi
-
-  log "Starting ${app_name} (${folder})..."
-  if (cd "${app_dir}" && docker compose up -d); then
-    started=$((started + 1))
-  else
-    warn "Failed to start ${folder}"
-    failed=$((failed + 1))
-  fi
+  started=$((started + 1))
 done < "${MANIFEST}"
 
 log "Apps started: ${started}, failed: ${failed}"

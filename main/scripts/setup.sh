@@ -86,25 +86,41 @@ ask_unique_port() {
 
 setup_one_app() {
   local folder="$1"
-  local default_name app_name port_app
+  local default_name app_name port_app current_port
 
   default_name="$(app_display_name "${folder}")"
   if [[ "${default_name}" == "${folder}" ]]; then
     default_name="$(app_title_from_folder "${folder}")"
   fi
+  current_port="$(app_port "${folder}")"
 
   echo
   echo "══════════════════════════════════════"
   printf '  Setup aplikasi: %s\n' "${folder}"
   echo "══════════════════════════════════════"
   echo "  Isi nama dan port aplikasi di bawah."
+  echo "  File nginx.conf & docker-compose.yml akan di-regenerate."
   echo
 
   prompt_required "Nama aplikasi" "${default_name}" app_name
-  ask_unique_port port_app "${folder}"
+
+  if [[ -n "${current_port}" ]]; then
+    while true; do
+      prompt_port "Port aplikasi" "${current_port}" port_app
+      if port_is_taken "${port_app}" "${folder}"; then
+        warn "Port ${port_app} sudah dipakai aplikasi lain. Pilih port lain."
+      else
+        break
+      fi
+    done
+  else
+    ask_unique_port port_app "${folder}"
+  fi
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
-  app_write_compose_stub "${folder}"
+  app_regenerate_files "${folder}" true
+  app_deploy "${folder}" || true
+  SETUP_LAST_FOLDER="${folder}"
 
   echo
   log "✓ ${app_name} → apps/${folder}/, port app ${port_app}"
@@ -125,36 +141,56 @@ setup_new_app() {
   folder="$(app_folder_from_name "${app_name}")"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
-  app_write_compose_stub "${folder}"
+  app_write_compose_stub "${folder}" true
+  app_deploy "${folder}" || true
+  SETUP_LAST_FOLDER="${folder}"
 
   echo
   log "✓ ${app_name} → apps/${folder}/, port app ${port_app}"
 }
 
-offer_reload() {
-  echo
-  local reload_choice
-  read_tty reload_choice "Jalankan scan & reload launcher sekarang? [Y/n]" ""
-  if [[ -z "${reload_choice}" || "${reload_choice}" =~ ^[Yy] ]]; then
-    "${SCRIPT_DIR}/scan.sh"
-    "${SCRIPT_DIR}/generate-nginx.sh"
-    "${SCRIPT_DIR}/generate-html.sh"
-    if launcher_is_running; then
-      docker compose -f "${MAIN_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
-      log "Nginx reloaded"
-    fi
+regenerate_apps() {
+  local -n _folders=$1
+  local folder
+  for folder in "${_folders[@]}"; do
+    app_regenerate_files "${folder}" true
+    app_deploy "${folder}" || true
+  done
+}
+
+reload_portal() {
+  "${SCRIPT_DIR}/scan.sh"
+  "${SCRIPT_DIR}/generate-nginx.sh"
+  "${SCRIPT_DIR}/generate-html.sh"
+  if launcher_is_running; then
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
+    log "Portal nginx di-reload"
+  else
+    log "Portal nginx belum jalan — jalankan menu Run untuk mengaktifkan proxy"
   fi
 }
 
+finish_setup() {
+  local -n _folders=$1
+  echo
+  log "Setup selesai untuk ${#_folders[@]} aplikasi (Docker sudah dijalankan)."
+  echo
+  reload_portal
+}
+
+SETUP_LAST_FOLDER=""
+
 cmd_setup_interactive() {
-  local needs_setup=()
+  local needs_setup=() configured=()
   local folder
 
   mkdir -p "${APPS_DIR}"
 
   while IFS= read -r folder; do
     [[ -n "${folder}" ]] || continue
-    if ! app_env_complete "${folder}"; then
+    if app_env_complete "${folder}"; then
+      configured+=("${folder}")
+    else
       needs_setup+=("${folder}")
     fi
   done < <(app_list_folders)
@@ -167,17 +203,81 @@ cmd_setup_interactive() {
   echo "  Setiap aplikasi akan ditanyakan:"
   echo "    • Nama aplikasi"
   echo "    • Port aplikasi"
+  echo "  Regenerate: nginx.conf + docker-compose.yml + jalankan Docker"
   echo
 
   if ((${#needs_setup[@]} == 0)); then
+    if ((${#configured[@]} == 0)); then
+      echo "  Belum ada aplikasi. Mulai dengan tambah baru."
+      echo
+      setup_new_app
+      local -a new_only=("${SETUP_LAST_FOLDER}")
+      finish_setup new_only
+      return 0
+    fi
+
     echo "  Semua folder di apps/ sudah punya .env lengkap."
     echo
-    local add_new
-    read_tty add_new "  Tambah aplikasi baru? [Y/n]" ""
-    if [[ -z "${add_new}" || "${add_new}" =~ ^[Yy] ]]; then
-      setup_new_app
-      offer_reload
+    echo "  0) + Tambah aplikasi baru"
+    echo "  r) Regenerate file saja (nginx.conf + compose) — tanpa ubah .env"
+    local i=1
+    for folder in "${configured[@]}"; do
+      printf '  %d) %s — setup ulang (nama, port, + regenerate)\n' "${i}" "${folder}"
+      i=$((i + 1))
+    done
+    echo
+    printf 'Pilih (0 / r / all / nomor / 1,3): '
+    local choice
+    read_tty choice "" ""
+
+    if [[ -z "${choice}" ]]; then
+      warn "Dibatalkan — tidak ada pilihan."
+      return 0
     fi
+
+    if [[ "${choice}" == "0" ]]; then
+      setup_new_app
+      local -a new_only=("${SETUP_LAST_FOLDER}")
+      finish_setup new_only
+      return 0
+    fi
+
+    if [[ "${choice}" == "r" || "${choice}" == "R" ]]; then
+      echo
+      echo "  Regenerate tanpa ubah .env:"
+      local j=1
+      for folder in "${configured[@]}"; do
+        printf '  %d) %s\n' "${j}" "${folder}"
+        j=$((j + 1))
+      done
+      echo
+      printf 'Pilih app (all / nomor / 1,3): '
+      local reg_choice
+      read_tty reg_choice "" ""
+      local reg_selected=()
+      if [[ "${reg_choice}" == "all" || "${reg_choice}" == "*" ]]; then
+        reg_selected=("${configured[@]}")
+      elif ! app_parse_selection "${reg_choice}" configured reg_selected; then
+        warn "Pilihan tidak valid."
+        return 0
+      fi
+      regenerate_apps reg_selected
+      finish_setup reg_selected
+      return 0
+    fi
+
+    local selected=()
+    if [[ "${choice}" == "all" || "${choice}" == "*" ]]; then
+      selected=("${configured[@]}")
+    elif ! app_parse_selection "${choice}" configured selected; then
+      warn "Pilihan tidak valid."
+      return 0
+    fi
+
+    for folder in "${selected[@]}"; do
+      setup_one_app "${folder}"
+    done
+    finish_setup selected
     return 0
   fi
 
@@ -203,7 +303,8 @@ cmd_setup_interactive() {
 
   if [[ "${choice}" == "0" ]]; then
     setup_new_app
-    offer_reload
+    local -a new_only=("${SETUP_LAST_FOLDER}")
+    finish_setup new_only
     return 0
   fi
 
@@ -217,9 +318,7 @@ cmd_setup_interactive() {
     setup_one_app "${folder}"
   done
 
-  echo
-  log "Setup selesai untuk ${#selected[@]} aplikasi."
-  offer_reload
+  finish_setup selected
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

@@ -2,3 +2,6 @@
 main/nginx.conf
 main/html/index.html
 main/data/apps.manifest
+
+# Production app — dikelola di server, bukan di repo
+apps/ho-fe/

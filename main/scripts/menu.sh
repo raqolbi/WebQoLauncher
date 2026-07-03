@@ -38,7 +38,7 @@ main_menu() {
   echo "  3) Restart    — restart app / launcher"
   echo "  4) Logs       — docker logs per app / portal"
   echo "  5) Apps       — daftar aplikasi"
-  echo "  6) Setup      — buat / lengkapi .env per app"
+  echo "  6) Setup      — buat / setup ulang / regenerate config per app"
   echo "  7) Status     — status container"
   echo "  8) Reload     — rescan + regenerate nginx"
   echo "  9) Exit"

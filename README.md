@@ -47,20 +47,22 @@ PORT_APP=3101
 Opsional:
 
 ```env
-APP_DESCRIPTION=Kasir Superoti
+APP_DESCRIPTION=Kasir POS
 APP_ICON=logo.png
 APP_PATH=pos
 APP_SPA=true
 ```
 
-| Variabel | Wajib | Keterangan |
-|----------|-------|------------|
-| `APP_NAME` | Ya | Nama tampilan di portal |
-| `PORT_APP` | Ya | Port host tempat app berjalan |
-| `APP_PATH` | Tidak | Path URL proxy (default: nama folder) |
-| `APP_DESCRIPTION` | Tidak | Deskripsi di card portal |
-| `APP_ICON` | Tidak | Nama file ikon (metadata) |
-| `APP_SPA` | Tidak | `false` untuk API murni; default `true` (Next.js / SPA fallback) |
+
+| Variabel          | Wajib | Keterangan                                                       |
+| ----------------- | ----- | ---------------------------------------------------------------- |
+| `APP_NAME`        | Ya    | Nama tampilan di portal                                          |
+| `PORT_APP`        | Ya    | Port host tempat app berjalan                                    |
+| `APP_PATH`        | Tidak | Path URL proxy (default: nama folder)                            |
+| `APP_DESCRIPTION` | Tidak | Deskripsi di card portal                                         |
+| `APP_ICON`        | Tidak | Nama file ikon (metadata)                                        |
+| `APP_SPA`         | Tidak | `false` untuk API murni; default `true` (Next.js / SPA fallback) |
+
 
 Setiap aplikasi juga **wajib** punya `docker-compose.yml` yang mem-publish port sesuai `PORT_APP`.
 
@@ -103,22 +105,24 @@ chmod +x launcher.sh main/scripts/*.sh
 ./launcher.sh start
 ```
 
-Buka **http://localhost:8080** — halaman portal menampilkan semua aplikasi yang terdeteksi.
+Buka **[http://localhost:8080](http://localhost:8080)** — halaman portal menampilkan semua aplikasi yang terdeteksi.
 
 ## Menu interaktif
 
 Jalankan tanpa argumen atau `./launcher.sh menu`:
 
-| Menu | Fungsi |
-|------|--------|
-| **Run** | Pilih app (`all` / nomor / `1,3`), opsional jalankan nginx portal |
-| **Stop** | Stop app yang running; `L` untuk nginx portal saja |
-| **Restart** | Restart app terpilih |
-| **Logs** | `docker compose logs -f` untuk satu app |
-| **Apps** | Daftar semua folder di `apps/` + status |
-| **Setup** | Wizard `.env` — tanya nama & port per app |
-| **Status** | Status container portal + apps |
-| **Reload** | Rescan + regenerate nginx |
+
+| Menu        | Fungsi                                                            |
+| ----------- | ----------------------------------------------------------------- |
+| **Run**     | Pilih app (`all` / nomor / `1,3`), opsional jalankan nginx portal |
+| **Stop**    | Stop app yang running; `L` untuk nginx portal saja                |
+| **Restart** | Restart app terpilih                                              |
+| **Logs**    | `docker compose logs -f` untuk satu app                           |
+| **Apps**    | Daftar semua folder di `apps/` + status                           |
+| **Setup**   | Wizard `.env` — buat baru, setup ulang, atau regenerate config    |
+| **Status**  | Status container portal + apps                                    |
+| **Reload**  | Rescan + regenerate nginx                                         |
+
 
 ### Setup wizard
 
@@ -132,21 +136,28 @@ Alur:
 - Folder di `apps/` tanpa `.env` → pilih dari daftar (atau `0` untuk app baru)
 - App baru → folder `apps/` dibuat otomatis dari nama (mis. `Point Of Sale` → `point-of-sale`)
 - File `.env` dibuat otomatis (`APP_PATH` = nama folder)
-- Opsional: scan + reload nginx di akhir
+- **Semua app sudah dikonfigurasi?** Menu menampilkan opsi tambahan:
+  - `r` — **Regenerate file saja** (`nginx.conf` + `docker-compose.yml` dari template, `.env` tidak diubah)
+  - Pilih nomor app — **Setup ulang** (ubah nama/port + regenerate file)
+  - `all` — setup ulang semua app sekaligus
+- Di akhir: scan + reload portal nginx otomatis
+- **Docker otomatis** setelah isi `.env`: container baru dibuat (`docker compose up -d`) atau di-recreate jika sudah berjalan
 
 ## Perintah CLI
 
-| Perintah | Fungsi |
-|----------|--------|
-| `./launcher.sh` | Menu interaktif |
-| `./launcher.sh menu` | Menu interaktif |
-| `./launcher.sh setup` | Wizard setup `.env` |
-| `./launcher.sh start` | Scan, generate, start semua app + nginx portal |
-| `./launcher.sh stop` | Stop portal dan semua app |
-| `./launcher.sh restart` | Stop lalu start ulang |
-| `./launcher.sh reload` | Rescan, regenerate config, reload Nginx |
-| `./launcher.sh scan` | Scan + generate config saja (tanpa start) |
-| `./launcher.sh status` | Tampilkan status container |
+
+| Perintah                | Fungsi                                         |
+| ----------------------- | ---------------------------------------------- |
+| `./launcher.sh`         | Menu interaktif                                |
+| `./launcher.sh menu`    | Menu interaktif                                |
+| `./launcher.sh setup`   | Wizard setup `.env`                            |
+| `./launcher.sh start`   | Scan, generate, start semua app + nginx portal |
+| `./launcher.sh stop`    | Stop portal dan semua app                      |
+| `./launcher.sh restart` | Stop lalu start ulang                          |
+| `./launcher.sh reload`  | Rescan, regenerate config, reload Nginx        |
+| `./launcher.sh scan`    | Scan + generate config saja (tanpa start)      |
+| `./launcher.sh status`  | Tampilkan status container                     |
+
 
 ## Menambah aplikasi baru
 
@@ -172,10 +183,12 @@ LAUNCHER_PORT=8080
 
 **Penting — dua jenis port:**
 
-| Port | Fungsi | Contoh |
-|------|--------|--------|
+
+| Port                                       | Fungsi                                           | Contoh                      |
+| ------------------------------------------ | ------------------------------------------------ | --------------------------- |
 | **Portal** (`LAUNCHER_PORT`, default 8080) | Reverse proxy Nginx — satu pintu masuk semua app | `http://localhost:8080/pos` |
-| **Port app** (`PORT_APP` di setiap `.env`) | Port docker compose per aplikasi | `http://localhost:3101` |
+| **Port app** (`PORT_APP` di setiap `.env`) | Port docker compose per aplikasi                 | `http://localhost:3101`     |
+
 
 App diakses via portal (`/ho-fe`) atau langsung ke port app (`:3101`).
 
@@ -183,23 +196,49 @@ App diakses via portal (`/ho-fe`) atau langsung ke port app (`:3101`).
 
 1. Build dengan `output: 'export'` di `next.config.js`
 2. Salin isi folder `out/` ke `apps/<nama-app>/public/`
-3. Pastikan `nginx.conf` ada di folder app (otomatis dari Setup/Run)
+3. Pastikan `docker-compose.yml` mount `nginx.conf` (otomatis dari Setup/Run/sync-nginx)
 4. Set `APP_SPA=true` di `.env` (default) — portal & container app sudah pakai fallback `index.html`
+
+```bash
+# Perbarui nginx.conf semua app dari template (setelah git pull)
+./launcher.sh sync-nginx
+
+# Recreate container agar mount nginx.conf aktif
+cd apps/ho-fe && docker compose up -d --force-recreate
+```
 
 ```nginx
 # Di container app (apps/<nama>/nginx.conf):
-try_files $uri $uri.html $uri/ /index.html;
+try_files $uri $uri.html $uri/index.html /index.html;
 ```
+
+### Domain production (SSL di host)
+
+Jika domain langsung mengarah ke port app (mis. `pos.domain.id` → `:3101`), bukan lewat portal `/pos-fe`:
+
+1. Pastikan container mount `nginx.conf` (lihat di atas)
+2. Generate vhost SSL untuk nginx di host:
+
+```bash
+./main/scripts/generate-host-vhost.sh pos pos.domain.id
+# → apps/ho-fe/host-nginx.conf
+```
+
+1. Salin ke server, sesuaikan sertifikat SSL, `nginx -t && systemctl reload nginx`
+
+Vhost host sudah menyertakan SPA fallback (`error_page 404 → index.html`) jika upstream masih mengembalikan 404.
 
 ## Contoh aplikasi
 
 Repo ini menyertakan 3 app demo (Nginx static):
 
-| App | Port | URL |
-|-----|------|-----|
-| Point Of Sale | 3101 | `/pos` |
-| Dashboard | 3102 | `/dashboard` |
-| Inventory | 3103 | `/inventory` |
+
+| App           | Port | URL          |
+| ------------- | ---- | ------------ |
+| Point Of Sale | 3101 | `/pos`       |
+| Dashboard     | 3102 | `/dashboard` |
+| Inventory     | 3103 | `/inventory` |
+
 
 ## Persyaratan
 
