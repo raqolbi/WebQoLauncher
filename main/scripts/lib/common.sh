@@ -46,22 +46,7 @@ env_format() {
 
 # Escape string untuk dipakai di nginx location regex
 nginx_regex_escape() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//./\\.}"
-  s="${s//+/\\+}"
-  s="${s//\*/\\*}"
-  s="${s//\?/\\?}"
-  s="${s//\[/\\[}"
-  s="${s//\]/\\]}"
-  s="${s//\(/\\(}"
-  s="${s//\)/\\)}"
-  s="${s//\{/\\{}"
-  s="${s//\}/\\}}"
-  s="${s//\^/\\^}"
-  s="${s//\$/\\$}"
-  s="${s//\|/\\|}"
-  printf '%s' "${s}"
+  printf '%s' "$1" | sed 's/[.[\*^$()+?{|}\\]/\\&/g'
 }
 
 # Baca input interaktif dari terminal (aman dipanggil dari subshell/menu)

@@ -33,7 +33,7 @@ for app_dir in "${APPS_DIR}"/*/; do
   app_path="$(env_get "${env_file}" "APP_PATH" "${folder}")"
   app_desc="$(env_get "${env_file}" "APP_DESCRIPTION")"
   app_icon="$(env_get "${env_file}" "APP_ICON")"
-  app_spa="$(env_get "${env_file}" "APP_SPA" "false")"
+  app_spa="$(env_get "${env_file}" "APP_SPA" "true")"
 
   if [[ -z "${app_name}" ]]; then
     warn "Skipping ${folder}: APP_NAME is required"

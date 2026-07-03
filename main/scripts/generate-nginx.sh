@@ -11,6 +11,95 @@ if [[ ! -f "${MANIFEST}" ]]; then
   die "Manifest not found. Run scan.sh first."
 fi
 
+# Emit reverse-proxy locations for one app (Next.js / SPA-safe)
+emit_app_proxy_locations() {
+  local folder="$1" app_path="$2" app_spa="$3"
+  local location_path="/${app_path}"
+  local location_path_regex upstream_name safe_folder is_spa=false
+
+  location_path_regex="$(nginx_regex_escape "${location_path}")"
+  safe_folder="${folder//[^a-zA-Z0-9_]/_}"
+  upstream_name="app_${safe_folder}"
+
+  if [[ "${app_spa}" == "false" || "${app_spa}" == "0" || "${app_spa}" == "no" ]]; then
+    is_spa=false
+  else
+    # Default: SPA/Next.js fallback ON (APP_SPA=true atau tidak diset)
+    is_spa=true
+  fi
+
+  cat <<NGINX_APP_HEADER
+
+        # ── App: ${folder} (path ${location_path}) ─────────────────────
+        # Reverse proxy ke container app di host.docker.internal.
+NGINX_APP_HEADER
+
+  if [[ "${is_spa}" == "true" ]]; then
+    cat <<NGINX_SPA
+
+        # Tanpa trailing slash → redirect ke path/
+        location = ${location_path} {
+            return 301 ${location_path}/;
+        }
+
+        # Next.js build output — jangan pernah di-fallback ke index.html
+        # GET /${app_path}/_next/static/... → file asli di upstream
+        location ~* ^${location_path_regex}/_next/ {
+            rewrite ^${location_path_regex}/(.*)\$ /\$1 break;
+            proxy_pass http://${upstream_name};
+            include /etc/nginx/proxy_params_extra.conf;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+
+        # Asset statis (css, js, gambar, font) — file asli
+        location ~* ^${location_path_regex}/(.+\.(?:css|js|mjs|map|jpg|jpeg|png|gif|ico|svg|webp|woff2?|ttf|eot))\$ {
+            rewrite ^${location_path_regex}/(.*)\$ /\$1 break;
+            proxy_pass http://${upstream_name};
+            include /etc/nginx/proxy_params_extra.conf;
+            expires 7d;
+            add_header Cache-Control "public";
+        }
+
+        # Folder public/assets/
+        location ${location_path}/assets/ {
+            proxy_pass http://${upstream_name}/assets/;
+            include /etc/nginx/proxy_params_extra.conf;
+            expires 7d;
+            add_header Cache-Control "public";
+        }
+
+        # Semua route lain (/login, /dashboard, ...) — SPA fallback
+        # Upstream mengembalikan 404 → layani index.html
+        location ${location_path}/ {
+            proxy_pass http://${upstream_name}/;
+            include /etc/nginx/proxy_params_extra.conf;
+            proxy_intercept_errors on;
+            error_page 404 = @${safe_folder}_spa_fallback;
+        }
+
+        location @${safe_folder}_spa_fallback {
+            proxy_pass http://${upstream_name}/index.html;
+            include /etc/nginx/proxy_params_extra.conf;
+        }
+NGINX_SPA
+  else
+    cat <<NGINX_API
+
+        # Mode API (APP_SPA=false) — tanpa fallback index.html
+        location = ${location_path} {
+            return 301 ${location_path}/;
+        }
+
+        location ${location_path}/ {
+            proxy_pass http://${upstream_name}/;
+            include /etc/nginx/proxy_params_extra.conf;
+            proxy_cache_bypass \$http_upgrade;
+        }
+NGINX_API
+  fi
+}
+
 tmp_conf="$(mktemp)"
 trap 'rm -f "${tmp_conf}"' EXIT
 
@@ -89,6 +178,7 @@ NGINX_UPSTREAM
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 
+        # Portal launcher — halaman daftar aplikasi
         location = / {
             root /usr/share/nginx/html;
             try_files /index.html =404;
@@ -106,65 +196,13 @@ NGINX_SERVER
     cat <<'NGINX_EMPTY'
         location / {
             default_type text/html;
-            return 200 '<!DOCTYPE html><html><head><title>WebQoLauncher</title></head><body><h1>No applications found</h1><p>Add a folder under <code>apps/</code> with <code>.env</code> and <code>docker-compose.yml</code>, then run the launcher again.</p></body></html>';
+            return 200 '<!DOCTYPE html><html><head><title>WebQoLauncher</title></head><body><h1>No applications found</h1></body></html>';
         }
 NGINX_EMPTY
   else
     while IFS=$'\t' read -r folder _ _ app_path _ _ app_spa; do
       [[ -n "${folder}" ]] || continue
-
-      location_path="/${app_path}"
-      location_path_regex="$(nginx_regex_escape "${location_path}")"
-      safe_id="${folder//[^a-zA-Z0-9_]/_}"
-      upstream_name="app_${safe_id}"
-      safe_folder="${folder//[^a-zA-Z0-9_]/_}"
-      is_spa=false
-      if [[ "${app_spa}" == "true" || "${app_spa}" == "1" || "${app_spa}" == "yes" ]]; then
-        is_spa=true
-      fi
-
-      if [[ "${is_spa}" == "true" ]]; then
-        cat <<NGINX_SPA
-
-        location = ${location_path} {
-            return 301 ${location_path}/;
-        }
-
-        location ${location_path}/ {
-            proxy_pass http://${upstream_name}/;
-            include /etc/nginx/proxy_params_extra.conf;
-            proxy_intercept_errors on;
-            error_page 404 = @${safe_folder}_spa_fallback;
-        }
-
-        location @${safe_folder}_spa_fallback {
-            proxy_pass http://${upstream_name}/index.html;
-            include /etc/nginx/proxy_params_extra.conf;
-        }
-NGINX_SPA
-      else
-        cat <<NGINX_PROXY
-
-        location = ${location_path} {
-            return 301 ${location_path}/;
-        }
-
-        location ${location_path}/ {
-            proxy_pass http://${upstream_name}/;
-            include /etc/nginx/proxy_params_extra.conf;
-
-            proxy_cache_bypass \$http_upgrade;
-            add_header Cache-Control "no-cache" always;
-        }
-
-        location ~* ^${location_path_regex}/.+\.(css|js|jpg|jpeg|png|gif|ico|svg|woff2?|ttf|eot)$ {
-            proxy_pass http://${upstream_name};
-            include /etc/nginx/proxy_params_extra.conf;
-            expires 7d;
-            add_header Cache-Control "public, immutable";
-        }
-NGINX_PROXY
-      fi
+      emit_app_proxy_locations "${folder}" "${app_path}" "${app_spa}"
     done < "${MANIFEST}"
   fi
 

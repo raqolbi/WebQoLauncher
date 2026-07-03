@@ -60,7 +60,7 @@ APP_SPA=true
 | `APP_PATH` | Tidak | Path URL proxy (default: nama folder) |
 | `APP_DESCRIPTION` | Tidak | Deskripsi di card portal |
 | `APP_ICON` | Tidak | Nama file ikon (metadata) |
-| `APP_SPA` | Tidak | `true` untuk SPA fallback via Nginx |
+| `APP_SPA` | Tidak | `false` untuk API murni; default `true` (Next.js / SPA fallback) |
 
 Setiap aplikasi juga **wajib** punya `docker-compose.yml` yang mem-publish port sesuai `PORT_APP`.
 
@@ -88,7 +88,7 @@ Nginx dilengkapi:
 - Gzip
 - Cache static asset (CSS, JS, gambar, font)
 - Security headers (X-Frame-Options, CSP-related, dll.)
-- SPA fallback jika `APP_SPA=true`
+- SPA / Next.js fallback (default aktif) — refresh `/login`, `/dashboard` tidak 404
 
 ## Quick start
 
@@ -178,6 +178,18 @@ LAUNCHER_PORT=8080
 | **Port app** (`PORT_APP` di setiap `.env`) | Port docker compose per aplikasi | `http://localhost:3101` |
 
 App diakses via portal (`/ho-fe`) atau langsung ke port app (`:3101`).
+
+### Next.js static export
+
+1. Build dengan `output: 'export'` di `next.config.js`
+2. Salin isi folder `out/` ke `apps/<nama-app>/public/`
+3. Pastikan `nginx.conf` ada di folder app (otomatis dari Setup/Run)
+4. Set `APP_SPA=true` di `.env` (default) — portal & container app sudah pakai fallback `index.html`
+
+```nginx
+# Di container app (apps/<nama>/nginx.conf):
+try_files $uri $uri.html $uri/ /index.html;
+```
 
 ## Contoh aplikasi
 

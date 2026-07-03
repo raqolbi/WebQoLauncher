@@ -76,6 +76,27 @@ app_container_name() {
   printf 'webqo-app-%s' "${folder//[^a-zA-Z0-9_.-]/-}"
 }
 
+app_write_nginx_conf() {
+  local folder="$1"
+  local app_dir nginx_conf template
+  app_dir="$(app_dir_for "${folder}")"
+  nginx_conf="${app_dir}/nginx.conf"
+  template="${MAIN_DIR}/templates/app-nginx.conf"
+
+  if [[ -f "${nginx_conf}" ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "${template}" ]]; then
+    warn "Template tidak ditemukan: ${template}"
+    return 1
+  fi
+
+  cp "${template}" "${nginx_conf}"
+  chmod 644 "${nginx_conf}"
+  log "Dibuat ${nginx_conf} (Next.js / SPA fallback)"
+}
+
 # Template docker-compose + public/ untuk app baru (bisa diganti user nanti)
 app_write_compose_stub() {
   local folder="$1"
@@ -85,11 +106,8 @@ app_write_compose_stub() {
   index_file="${public_dir}/index.html"
   cname="$(app_container_name "${folder}")"
 
-  if [[ -f "${app_dir}/docker-compose.yml" ]]; then
-    return 0
-  fi
-
   mkdir -p "${public_dir}"
+
   if [[ ! -f "${index_file}" ]]; then
     cat > "${index_file}" <<EOF
 <!DOCTYPE html>
@@ -100,11 +118,17 @@ app_write_compose_stub() {
 </head>
 <body>
   <h1>$(app_display_name "${folder}")</h1>
-  <p>Placeholder — ganti isi <code>public/</code> atau sesuaikan <code>docker-compose.yml</code>.</p>
+  <p>Placeholder — salin hasil <code>next build</code> (folder <code>out/</code>) ke <code>public/</code>.</p>
 </body>
 </html>
 EOF
     chmod 644 "${index_file}"
+  fi
+
+  app_write_nginx_conf "${folder}"
+
+  if [[ -f "${app_dir}/docker-compose.yml" ]]; then
+    return 0
   fi
 
   cat > "${app_dir}/docker-compose.yml" <<EOF
@@ -116,14 +140,16 @@ services:
       - "\${PORT_APP}:80"
     volumes:
       - ./public:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
     restart: unless-stopped
 EOF
   chmod 644 "${app_dir}/docker-compose.yml"
-  log "Dibuat ${app_dir}/docker-compose.yml (+ public/index.html placeholder)"
+  log "Dibuat ${app_dir}/docker-compose.yml (+ nginx.conf Next.js)"
 }
 
 app_ensure_compose() {
   local folder="$1"
+  app_write_nginx_conf "${folder}" || true
   if app_has_compose "${folder}"; then
     return 0
   fi
