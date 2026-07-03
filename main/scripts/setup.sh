@@ -104,9 +104,10 @@ setup_one_app() {
   ask_unique_port port_app "${folder}"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
+  app_write_compose_stub "${folder}"
 
   echo
-  log "✓ ${app_name} → folder apps/${folder}, port ${port_app}"
+  log "✓ ${app_name} → apps/${folder}/, port app ${port_app}"
 }
 
 setup_new_app() {
@@ -124,10 +125,10 @@ setup_new_app() {
   folder="$(app_folder_from_name "${app_name}")"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
+  app_write_compose_stub "${folder}"
 
   echo
-  log "✓ ${app_name} → apps/${folder}/, port ${port_app}"
-  warn "Jangan lupa tambahkan docker-compose.yml di apps/${folder}/"
+  log "✓ ${app_name} → apps/${folder}/, port app ${port_app}"
 }
 
 offer_reload() {

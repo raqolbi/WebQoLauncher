@@ -53,6 +53,114 @@ launcher_is_running() {
   docker compose -f "${MAIN_DIR}/docker-compose.yml" ps --status running -q nginx 2>/dev/null | grep -q .
 }
 
+portal_port() {
+  env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080"
+}
+
+app_url_path() {
+  local folder="$1"
+  local env_file path
+  env_file="$(app_dir_for "${folder}")/.env"
+  if [[ -f "${env_file}" ]]; then
+    path="$(env_get "${env_file}" "APP_PATH" "${folder}")"
+  else
+    path="${folder}"
+  fi
+  path="${path#/}"
+  path="${path%/}"
+  printf '/%s/' "${path}"
+}
+
+app_container_name() {
+  local folder="$1"
+  printf 'webqo-app-%s' "${folder//[^a-zA-Z0-9_.-]/-}"
+}
+
+# Template docker-compose + public/ untuk app baru (bisa diganti user nanti)
+app_write_compose_stub() {
+  local folder="$1"
+  local app_dir public_dir index_file cname
+  app_dir="$(app_dir_for "${folder}")"
+  public_dir="${app_dir}/public"
+  index_file="${public_dir}/index.html"
+  cname="$(app_container_name "${folder}")"
+
+  if [[ -f "${app_dir}/docker-compose.yml" ]]; then
+    return 0
+  fi
+
+  mkdir -p "${public_dir}"
+  if [[ ! -f "${index_file}" ]]; then
+    cat > "${index_file}" <<EOF
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>$(app_display_name "${folder}")</title>
+</head>
+<body>
+  <h1>$(app_display_name "${folder}")</h1>
+  <p>Placeholder — ganti isi <code>public/</code> atau sesuaikan <code>docker-compose.yml</code>.</p>
+</body>
+</html>
+EOF
+    chmod 644 "${index_file}"
+  fi
+
+  cat > "${app_dir}/docker-compose.yml" <<EOF
+services:
+  app:
+    image: nginx:1.27-alpine
+    container_name: ${cname}
+    ports:
+      - "\${PORT_APP}:80"
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+    restart: unless-stopped
+EOF
+  chmod 644 "${app_dir}/docker-compose.yml"
+  log "Dibuat ${app_dir}/docker-compose.yml (+ public/index.html placeholder)"
+}
+
+app_ensure_compose() {
+  local folder="$1"
+  if app_has_compose "${folder}"; then
+    return 0
+  fi
+  warn "App ${folder} belum punya docker-compose.yml — membuat template otomatis."
+  app_write_compose_stub "${folder}"
+}
+
+app_compose_ps() {
+  local folder="$1"
+  local app_dir
+  app_dir="$(app_dir_for "${folder}")"
+  [[ -f "${app_dir}/docker-compose.yml" ]] || return 1
+  (cd "${app_dir}" && docker compose ps 2>/dev/null)
+}
+
+app_print_info() {
+  local folder="$1"
+  local app_dir port path
+  app_dir="$(app_dir_for "${folder}")"
+  port="$(app_port "${folder}")"
+  path="$(app_url_path "${folder}")"
+  local portal
+  portal="$(portal_port)"
+
+  printf '  Nama     : %s\n' "$(app_display_name "${folder}")"
+  printf '  Folder   : apps/%s/\n' "${folder}"
+  printf '  Port app : %s  (docker compose, bukan portal)\n' "${port:-?}"
+  printf '  URL app  : http://localhost:%s\n' "${port:-?}"
+  if launcher_is_running; then
+    printf '  URL proxy: http://localhost:%s%s\n' "${portal}" "${path}"
+  else
+    printf '  URL proxy: (portal nginx belum jalan — port %s)\n' "${portal}"
+  fi
+  printf '  Compose  : %s\n' "${app_dir}/docker-compose.yml"
+  printf '  Status   : %s\n' "$(app_status_label "${folder}")"
+}
+
 # Collect PORT_APP values already used in apps/.
 app_used_ports() {
   local folder env_file port
@@ -131,10 +239,14 @@ app_start() {
   app_dir="$(app_dir_for "${folder}")"
 
   app_env_complete "${folder}" || die "App ${folder} belum dikonfigurasi (.env)"
-  app_has_compose "${folder}" || die "App ${folder} tidak punya docker-compose.yml"
+  app_ensure_compose "${folder}"
 
   log "Starting $(app_display_name "${folder}") (${folder})..."
-  (cd "${app_dir}" && docker compose up -d)
+  if ! (cd "${app_dir}" && docker compose up -d); then
+    warn "Gagal start ${folder} — cek: cd apps/${folder} && docker compose up -d"
+    return 1
+  fi
+  log "App berjalan di http://localhost:$(app_port "${folder}")"
 }
 
 app_stop() {
@@ -156,13 +268,84 @@ app_restart() {
 
 app_logs() {
   local folder="$1"
+  local follow="${2:-true}"
   local app_dir
   app_dir="$(app_dir_for "${folder}")"
 
   app_has_compose "${folder}" || die "App ${folder} tidak punya docker-compose.yml"
 
-  log "Logs $(app_display_name "${folder}") — Ctrl+C untuk keluar"
-  (cd "${app_dir}" && docker compose logs -f --tail=100)
+  echo
+  echo "══════════════════════════════════════"
+  printf '  Docker logs: %s\n' "$(app_display_name "${folder}")"
+  echo "══════════════════════════════════════"
+  app_print_info "${folder}"
+  echo
+  echo "── Container ──"
+  if ! app_compose_ps "${folder}"; then
+    warn "Tidak ada container (app belum pernah dijalankan?)"
+  fi
+  echo
+  echo "── Log output (Ctrl+C untuk keluar) ──"
+  if [[ "${follow}" == "true" ]]; then
+    (cd "${app_dir}" && docker compose logs -f --tail=100)
+  else
+    (cd "${app_dir}" && docker compose logs --tail=100)
+  fi
+}
+
+portal_logs() {
+  echo
+  echo "══════════════════════════════════════"
+  echo "  Docker logs: Portal Nginx"
+  echo "══════════════════════════════════════"
+  printf '  Port portal : %s\n' "$(portal_port)"
+  printf '  Compose     : %s/docker-compose.yml\n' "${MAIN_DIR}"
+  echo
+  echo "── Container ──"
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" ps 2>/dev/null || warn "Portal tidak berjalan"
+  echo
+  echo "── Log output (Ctrl+C untuk keluar) ──"
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" logs -f --tail=100
+}
+
+print_full_status() {
+  local portal folder
+  portal="$(portal_port)"
+
+  echo
+  log "Portal Nginx (reverse proxy):"
+  if launcher_is_running; then
+    printf '  Status : RUNNING\n'
+    printf '  URL    : http://localhost:%s\n' "${portal}"
+    printf '  Port   : %s  ← ini port portal, BUKAN port app\n' "${portal}"
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" ps 2>/dev/null | sed 's/^/  /' || true
+  else
+    printf '  Status : STOPPED\n'
+    printf '  URL    : http://localhost:%s (belum aktif)\n' "${portal}"
+    printf '  Port   : %s  ← jalankan menu Run + pilih portal, atau ./launcher.sh start\n' "${portal}"
+  fi
+
+  echo
+  log "Aplikasi:"
+  local found=0
+  while IFS= read -r folder; do
+    [[ -n "${folder}" ]] || continue
+    app_env_complete "${folder}" || continue
+    found=1
+    echo
+    app_print_info "${folder}"
+    if app_has_compose "${folder}"; then
+      echo "  Container:"
+      app_compose_ps "${folder}" | sed 's/^/    /' || echo "    (belum ada container)"
+    else
+      echo "  Container: (belum ada docker-compose.yml)"
+    fi
+  done < <(app_list_folders)
+
+  if (( found == 0 )); then
+    echo "  (belum ada app terkonfigurasi — gunakan menu Setup)"
+  fi
+  echo
 }
 
 app_write_env() {

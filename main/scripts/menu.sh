@@ -10,17 +10,25 @@ source "${SCRIPT_DIR}/lib/apps.sh"
 LAUNCHER_SCRIPT="${SCRIPT_DIR}/launcher.sh"
 
 banner() {
-  local port
-  port="$(env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080")"
+  local portal running_apps=0 configured=0 folder
+  portal="$(portal_port)"
+
+  while IFS= read -r folder; do
+    [[ -n "${folder}" ]] || continue
+    app_env_complete "${folder}" && configured=$((configured + 1))
+    app_is_running "${folder}" && running_apps=$((running_apps + 1))
+  done < <(app_list_folders)
+
   echo
   echo "╔══════════════════════════════════════╗"
   echo "║         WebQoLauncher Menu           ║"
   echo "╚══════════════════════════════════════╝"
   if launcher_is_running; then
-    printf '  Launcher: RUNNING → http://localhost:%s\n' "${port}"
+    printf '  Portal Nginx : RUNNING → http://localhost:%s\n' "${portal}"
   else
-    printf '  Launcher: STOPPED (port %s)\n' "${port}"
+    printf '  Portal Nginx : STOPPED (port %s — bukan port app)\n' "${portal}"
   fi
+  printf '  Aplikasi     : %d dikonfigurasi, %d running\n' "${configured}" "${running_apps}"
   echo
 }
 
@@ -28,7 +36,7 @@ main_menu() {
   echo "  1) Run        — jalankan app (+ launcher)"
   echo "  2) Stop       — hentikan app / launcher"
   echo "  3) Restart    — restart app / launcher"
-  echo "  4) Logs       — tail log docker compose"
+  echo "  4) Logs       — docker logs per app / portal"
   echo "  5) Apps       — daftar aplikasi"
   echo "  6) Setup      — buat / lengkapi .env per app"
   echo "  7) Status     — status container"
@@ -94,7 +102,7 @@ prompt_app_selection() {
 }
 
 ask_launcher_too() {
-  printf 'Sertakan launcher nginx? [Y/n]: '
+  printf 'Jalankan portal Nginx (port %s)? [Y/n]: ' "$(portal_port)"
   local ans
   IFS= read -r ans || ans=""
   [[ -z "${ans}" || "${ans}" =~ ^[Yy] ]]
@@ -129,11 +137,9 @@ menu_run() {
   done
 
   if ask_launcher_too; then
-    log "Starting launcher nginx..."
+    log "Starting portal nginx..."
     docker compose -f "${MAIN_DIR}/docker-compose.yml" up -d --remove-orphans
-    local port
-    port="$(env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080")"
-    log "Launcher → http://localhost:${port}"
+    log "Portal → http://localhost:$(portal_port)"
   fi
 }
 
@@ -220,20 +226,50 @@ menu_restart() {
   fi
 }
 
-menu_logs() {
-  local running=()
-  mapfile -t running < <(list_running_apps)
+list_logs_targets() {
+  local out=()
+  local folder
+  while IFS= read -r folder; do
+    [[ -n "${folder}" ]] || continue
+    app_has_compose "${folder}" && out+=("${folder}")
+  done < <(app_list_folders)
+  printf '%s\n' "${out[@]}"
+}
 
-  if ((${#running[@]} == 0)); then
-    warn "Tidak ada app yang sedang running."
+menu_logs() {
+  local targets=()
+  mapfile -t targets < <(list_logs_targets)
+
+  echo
+  echo "Pilih sumber logs:"
+  if launcher_is_running || [[ -f "${MAIN_DIR}/docker-compose.yml" ]]; then
+    echo "  P) Portal Nginx (port $(portal_port))"
+  fi
+  if ((${#targets[@]} == 0)); then
+    echo "  (belum ada app dengan docker-compose.yml)"
+    if ! launcher_is_running; then
+      warn "Jalankan app dulu (menu Run) atau Setup untuk buat docker-compose.yml."
+    fi
+    return
+  fi
+  print_app_list targets
+  echo
+  printf 'Pilih (P=portal / nomor app): '
+  local choice
+  IFS= read -r choice || choice=""
+
+  if [[ "${choice}" =~ ^[Pp]$ ]]; then
+    portal_logs
     return
   fi
 
   local selected=()
-  prompt_app_selection running selected "Pilih app untuk logs (nomor): " || return
-
+  if ! app_parse_selection "${choice}" targets selected; then
+    warn "Pilihan tidak valid."
+    return
+  fi
   if ((${#selected[@]} != 1)); then
-    warn "Logs hanya untuk satu app. Pilih satu nomor."
+    warn "Pilih satu app saja."
     return
   fi
 
@@ -259,7 +295,7 @@ menu_setup() {
 }
 
 menu_status() {
-  bash "${LAUNCHER_SCRIPT}" status
+  print_full_status
 }
 
 menu_reload() {

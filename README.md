@@ -166,8 +166,18 @@ Tidak perlu edit manual `main/nginx.conf` atau `main/docker-compose.yml`.
 File `main/.env`:
 
 ```env
+# Port portal Nginx — akses semua app via http://localhost:8080
 LAUNCHER_PORT=8080
 ```
+
+**Penting — dua jenis port:**
+
+| Port | Fungsi | Contoh |
+|------|--------|--------|
+| **Portal** (`LAUNCHER_PORT`, default 8080) | Reverse proxy Nginx — satu pintu masuk semua app | `http://localhost:8080/pos` |
+| **Port app** (`PORT_APP` di setiap `.env`) | Port docker compose per aplikasi | `http://localhost:3101` |
+
+App diakses via portal (`/ho-fe`) atau langsung ke port app (`:3101`).
 
 ## Contoh aplikasi
 

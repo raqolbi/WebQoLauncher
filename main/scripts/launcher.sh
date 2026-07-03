@@ -65,21 +65,8 @@ cmd_reload() {
 }
 
 cmd_status() {
-  log "Launcher:"
-  docker compose -f "${MAIN_DIR}/docker-compose.yml" ps 2>/dev/null || warn "Launcher not running"
-
-  if [[ -f "${MANIFEST}" ]] && [[ -s "${MANIFEST}" ]]; then
-    echo
-    log "Applications:"
-    while IFS=$'\t' read -r folder app_name port_app app_path _ _ _; do
-      [[ -n "${folder}" ]] || continue
-      printf '  - %s (%s) → /%s :%s\n' "${app_name}" "${folder}" "${app_path}" "${port_app}"
-      (cd "${APPS_DIR}/${folder}" && docker compose ps 2>/dev/null) || true
-      echo
-    done < "${MANIFEST}"
-  else
-    warn "No applications in manifest"
-  fi
+  source "${SCRIPT_DIR}/lib/apps.sh"
+  print_full_status
 }
 
 main() {
