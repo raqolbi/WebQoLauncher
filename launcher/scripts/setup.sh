@@ -7,15 +7,22 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 source "${SCRIPT_DIR}/lib/apps.sh"
 
+# $3 = nama variabel output
 prompt_required() {
-  local label="$1" default="${2:-}" answer=""
+  local label="$1" default="${2:-}" __out="$3"
+  local prompt answer=""
   while [[ -z "${answer}" ]]; do
     if [[ -n "${default}" ]]; then
-      printf '%s [%s]: ' "${label}" "${default}"
+      prompt="${label} [${default}]: "
     else
-      printf '%s: ' "${label}"
+      prompt="${label}: "
     fi
-    IFS= read -r answer || answer=""
+    if [[ -r /dev/tty ]]; then
+      printf '%s' "${prompt}" >/dev/tty
+      IFS= read -r answer </dev/tty || answer=""
+    else
+      IFS= read -r -p "${prompt}" answer || answer=""
+    fi
     if [[ -z "${answer}" && -n "${default}" ]]; then
       answer="${default}"
     fi
@@ -23,16 +30,21 @@ prompt_required() {
       warn "Wajib diisi."
     fi
   done
-  printf '%s' "${answer}"
+  printf -v "${__out}" '%s' "${answer}"
 }
 
 prompt_port() {
-  local label="$1" default="$2" answer=""
+  local label="$1" default="$2" __out="$3" answer=""
+  local tries=0
   while true; do
-    answer="$(prompt_required "${label}" "${default}")"
+    prompt_required "${label}" "${default}" answer
     if [[ "${answer}" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= 65535 )); then
-      printf '%s' "${answer}"
+      printf -v "${__out}" '%s' "${answer}"
       return 0
+    fi
+    tries=$((tries + 1))
+    if (( tries >= 20 )); then
+      die "Terlalu banyak percobaan input port."
     fi
     warn "Port harus angka 1–65535."
   done
@@ -51,23 +63,22 @@ port_is_taken() {
   return 1
 }
 
+# $1 = variabel output port, $2 = folder yang dikecualikan (opsional)
 ask_unique_port() {
-  local exclude_folder="${1:-}" suggested
+  local __out="$1" exclude_folder="${2:-}" suggested port
   suggested="$(app_suggest_port 3101)"
-  local port
   while true; do
-    port="$(prompt_port "Port aplikasi" "${suggested}")"
+    prompt_port "Port aplikasi" "${suggested}" port
     if port_is_taken "${port}" "${exclude_folder}"; then
       warn "Port ${port} sudah dipakai aplikasi lain. Pilih port lain."
       suggested="$(app_suggest_port $((port + 1)))"
     else
-      printf '%s' "${port}"
+      printf -v "${__out}" '%s' "${port}"
       return 0
     fi
   done
 }
 
-# Tanya nama & port secara interaktif, lalu tulis .env
 setup_one_app() {
   local folder="$1"
   local default_name app_name port_app
@@ -84,8 +95,8 @@ setup_one_app() {
   echo "  Isi nama dan port aplikasi di bawah."
   echo
 
-  app_name="$(prompt_required "Nama aplikasi" "${default_name}")"
-  port_app="$(ask_unique_port "${folder}")"
+  prompt_required "Nama aplikasi" "${default_name}" app_name
+  ask_unique_port port_app "${folder}"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
 
@@ -103,8 +114,8 @@ setup_new_app() {
   echo "  Isi nama dan port aplikasi. Folder di apps/ dibuat otomatis."
   echo
 
-  app_name="$(prompt_required "Nama aplikasi")"
-  port_app="$(ask_unique_port)"
+  prompt_required "Nama aplikasi" "" app_name
+  ask_unique_port port_app
   folder="$(app_folder_from_name "${app_name}")"
 
   app_write_env "${folder}" "${app_name}" "${port_app}"
