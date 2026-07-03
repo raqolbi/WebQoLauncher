@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Scan apps/ for .env files and write launcher/data/apps.manifest
+# Scan apps/ for .env files and write main/data/apps.manifest
 
 set -euo pipefail
 

@@ -41,16 +41,16 @@ cmd_start() {
   "${SCRIPT_DIR}/start-apps.sh"
 
   log "Starting launcher nginx..."
-  docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" up -d --remove-orphans
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" up -d --remove-orphans
 
   local port
-  port="$(env_get "${LAUNCHER_DIR}/.env" "LAUNCHER_PORT" "8080")"
+  port="$(env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080")"
   log "Launcher ready → http://localhost:${port}"
 }
 
 cmd_stop() {
   log "Stopping launcher nginx..."
-  docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" down || true
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" down || true
   "${SCRIPT_DIR}/stop-apps.sh"
 }
 
@@ -66,7 +66,7 @@ cmd_reload() {
 
 cmd_status() {
   log "Launcher:"
-  docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" ps 2>/dev/null || warn "Launcher not running"
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" ps 2>/dev/null || warn "Launcher not running"
 
   if [[ -f "${MANIFEST}" ]] && [[ -s "${MANIFEST}" ]]; then
     echo

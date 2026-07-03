@@ -30,11 +30,14 @@ app_has_compose() {
 
 app_env_complete() {
   local folder="$1"
-  local env_file
+  local env_file port_app
   env_file="$(app_dir_for "${folder}")/.env"
   [[ -f "${env_file}" ]] || return 1
   [[ -n "$(env_get "${env_file}" "APP_NAME")" ]] || return 1
-  [[ -n "$(env_get "${env_file}" "PORT_APP")" ]] || return 1
+  port_app="$(env_get "${env_file}" "PORT_APP")"
+  [[ -n "${port_app}" ]] || return 1
+  [[ "${port_app}" =~ ^[0-9]+$ ]] || return 1
+  (( port_app >= 1 && port_app <= 65535 )) || return 1
   return 0
 }
 
@@ -47,7 +50,7 @@ app_is_running() {
 }
 
 launcher_is_running() {
-  docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" ps --status running -q nginx 2>/dev/null | grep -q .
+  docker compose -f "${MAIN_DIR}/docker-compose.yml" ps --status running -q nginx 2>/dev/null | grep -q .
 }
 
 # Collect PORT_APP values already used in apps/.
@@ -68,9 +71,10 @@ app_suggest_port() {
   local used_ports
   mapfile -t used_ports < <(app_used_ports | sort -n | uniq)
 
-  while true; do
+  while (( port <= 65535 )); do
     local taken=false
     for u in "${used_ports[@]}"; do
+      u="${u//[[:space:]]/}"
       if [[ "${u}" == "${port}" ]]; then
         taken=true
         break
@@ -82,6 +86,7 @@ app_suggest_port() {
     fi
     port=$((port + 1))
   done
+  die "Semua port 3101–65535 sudah terpakai"
 }
 
 app_display_name() {
@@ -167,11 +172,11 @@ app_write_env() {
   env_file="${app_dir}/.env"
 
   mkdir -p "${app_dir}"
-  cat > "${env_file}" <<EOF
-APP_NAME=${app_name}
-PORT_APP=${port_app}
-APP_PATH=${folder}
-EOF
+  {
+    printf 'APP_NAME=%s\n' "$(env_format "${app_name}")"
+    printf 'PORT_APP=%s\n' "${port_app}"
+    printf 'APP_PATH=%s\n' "$(env_format "${folder}")"
+  } > "${env_file}"
   chmod 644 "${env_file}"
   log "Dibuat ${env_file}"
 }
@@ -225,7 +230,7 @@ app_parse_selection() {
     return 0
   fi
 
-  local token idx
+  local token idx seen=""
   for token in ${input}; do
     if ! [[ "${token}" =~ ^[0-9]+$ ]]; then
       warn "Pilihan tidak valid: ${token}"
@@ -236,7 +241,11 @@ app_parse_selection() {
       warn "Nomor di luar range: ${token}"
       return 1
     fi
-    _out+=("${_items[idx]}")
+    # Hindari duplikat (mis. input "1,1")
+    if [[ " ${seen} " != *" ${idx} "* ]]; then
+      _out+=("${_items[idx]}")
+      seen+="${idx} "
+    fi
   done
 
   ((${#_out[@]} > 0))

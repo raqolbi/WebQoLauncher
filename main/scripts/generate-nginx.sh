@@ -66,9 +66,10 @@ NGINX_HEADER
   if [[ -s "${MANIFEST}" ]]; then
     while IFS=$'\t' read -r folder _ port_app _ _ _ _; do
       [[ -n "${folder}" ]] || continue
+      safe_id="${folder//[^a-zA-Z0-9_]/_}"
       cat <<NGINX_UPSTREAM
 
-    upstream app_${folder} {
+    upstream app_${safe_id} {
         server host.docker.internal:${port_app};
         keepalive 32;
     }
@@ -113,7 +114,10 @@ NGINX_EMPTY
       [[ -n "${folder}" ]] || continue
 
       location_path="/${app_path}"
-      upstream_name="app_${folder}"
+      location_path_regex="$(nginx_regex_escape "${location_path}")"
+      safe_id="${folder//[^a-zA-Z0-9_]/_}"
+      upstream_name="app_${safe_id}"
+      safe_folder="${folder//[^a-zA-Z0-9_]/_}"
       is_spa=false
       if [[ "${app_spa}" == "true" || "${app_spa}" == "1" || "${app_spa}" == "yes" ]]; then
         is_spa=true
@@ -130,10 +134,10 @@ NGINX_EMPTY
             proxy_pass http://${upstream_name}/;
             include /etc/nginx/proxy_params_extra.conf;
             proxy_intercept_errors on;
-            error_page 404 = @${folder}_spa_fallback;
+            error_page 404 = @${safe_folder}_spa_fallback;
         }
 
-        location @${folder}_spa_fallback {
+        location @${safe_folder}_spa_fallback {
             proxy_pass http://${upstream_name}/index.html;
             include /etc/nginx/proxy_params_extra.conf;
         }
@@ -153,7 +157,7 @@ NGINX_SPA
             add_header Cache-Control "no-cache" always;
         }
 
-        location ~* ^${location_path}/.+\.(css|js|jpg|jpeg|png|gif|ico|svg|woff2?|ttf|eot)$ {
+        location ~* ^${location_path_regex}/.+\.(css|js|jpg|jpeg|png|gif|ico|svg|woff2?|ttf|eot)$ {
             proxy_pass http://${upstream_name};
             include /etc/nginx/proxy_params_extra.conf;
             expires 7d;

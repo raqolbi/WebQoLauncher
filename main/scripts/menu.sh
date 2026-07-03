@@ -11,7 +11,7 @@ LAUNCHER_SCRIPT="${SCRIPT_DIR}/launcher.sh"
 
 banner() {
   local port
-  port="$(env_get "${LAUNCHER_DIR}/.env" "LAUNCHER_PORT" "8080")"
+  port="$(env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080")"
   echo
   echo "╔══════════════════════════════════════╗"
   echo "║         WebQoLauncher Menu           ║"
@@ -105,7 +105,7 @@ regenerate_if_needed() {
   "${SCRIPT_DIR}/generate-nginx.sh"
   "${SCRIPT_DIR}/generate-html.sh"
   if launcher_is_running; then
-    docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" exec -T nginx nginx -s reload 2>/dev/null || true
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" exec -T nginx nginx -s reload 2>/dev/null || true
   fi
 }
 
@@ -130,9 +130,9 @@ menu_run() {
 
   if ask_launcher_too; then
     log "Starting launcher nginx..."
-    docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" up -d --remove-orphans
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" up -d --remove-orphans
     local port
-    port="$(env_get "${LAUNCHER_DIR}/.env" "LAUNCHER_PORT" "8080")"
+    port="$(env_get "${MAIN_DIR}/.env" "LAUNCHER_PORT" "8080")"
     log "Launcher → http://localhost:${port}"
   fi
 }
@@ -165,7 +165,7 @@ menu_stop() {
 
   if [[ "${choice}" =~ ^[Ll]$ ]]; then
     log "Stopping launcher nginx..."
-    docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" down || true
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" down || true
     return
   fi
 
@@ -188,16 +188,12 @@ menu_stop() {
     local ans
     IFS= read -r ans || ans=""
     if [[ "${ans}" =~ ^[Yy]$ ]]; then
-      docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" down || true
+      docker compose -f "${MAIN_DIR}/docker-compose.yml" down || true
     fi
   fi
 }
 
 menu_restart() {
-  local running=()
-  mapfile -t running < <(list_running_apps)
-
-  # Untuk restart, izinkan juga app configured yang stopped
   local configured=()
   mapfile -t configured < <(list_configured_apps)
 
@@ -217,9 +213,9 @@ menu_restart() {
   done
 
   if ask_launcher_too; then
-    docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" up -d --remove-orphans
+    docker compose -f "${MAIN_DIR}/docker-compose.yml" up -d --remove-orphans
     if launcher_is_running; then
-      docker compose -f "${LAUNCHER_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
+      docker compose -f "${MAIN_DIR}/docker-compose.yml" exec -T nginx nginx -s reload
     fi
   fi
 }
@@ -259,7 +255,7 @@ menu_apps() {
 }
 
 menu_setup() {
-  "${SCRIPT_DIR}/setup.sh"
+  bash "${SCRIPT_DIR}/setup.sh" || true
 }
 
 menu_status() {

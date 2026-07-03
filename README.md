@@ -1,6 +1,6 @@
 # WebQoLauncher
 
-Portal internal berbasis **Docker + Nginx** yang secara otomatis mendeteksi aplikasi di folder `apps/`, membaca konfigurasi dari `.env`, menjalankan Docker Compose per aplikasi, dan menyajikan reverse proxy plus halaman launcher.
+Portal internal berbasis **Docker + Nginx** yang secara otomatis mendeteksi aplikasi di folder `apps/`, membaca konfigurasi dari `.env`, menjalankan Docker Compose per aplikasi, dan menyajikan reverse proxy plus halaman portal.
 
 Mirip konsep [QoLauncher](https://github.com/raqolbi/QoLauncher), tetapi fokus pada **web apps** dengan reverse proxy Nginx — bukan supervisor binary Go.
 
@@ -15,8 +15,8 @@ Mirip konsep [QoLauncher](https://github.com/raqolbi/QoLauncher), tetapi fokus p
 │   │   └── public/
 │   ├── dashboard/
 │   └── inventory/
-├── launcher/
-│   ├── docker-compose.yml   # Container Nginx launcher
+├── main/                    # Runtime portal (Nginx + scripts)
+│   ├── docker-compose.yml   # Container Nginx reverse proxy
 │   ├── nginx.conf           # Auto-generated (jangan edit manual)
 │   ├── proxy_params_extra.conf
 │   ├── html/index.html      # Auto-generated landing page
@@ -55,10 +55,10 @@ APP_SPA=true
 
 | Variabel | Wajib | Keterangan |
 |----------|-------|------------|
-| `APP_NAME` | Ya | Nama tampilan di launcher |
+| `APP_NAME` | Ya | Nama tampilan di portal |
 | `PORT_APP` | Ya | Port host tempat app berjalan |
 | `APP_PATH` | Tidak | Path URL proxy (default: nama folder) |
-| `APP_DESCRIPTION` | Tidak | Deskripsi di card launcher |
+| `APP_DESCRIPTION` | Tidak | Deskripsi di card portal |
 | `APP_ICON` | Tidak | Nama file ikon (metadata) |
 | `APP_SPA` | Tidak | `true` untuk SPA fallback via Nginx |
 
@@ -69,9 +69,9 @@ Setiap aplikasi juga **wajib** punya `docker-compose.yml` yang mem-publish port 
 Saat `./launcher.sh start`:
 
 1. **Scan** — baca semua folder di `apps/` yang punya `.env`
-2. **Generate** — buat `nginx.conf` dan landing page HTML
+2. **Generate** — buat `main/nginx.conf` dan landing page HTML
 3. **Start apps** — `docker compose up -d` di setiap folder aplikasi
-4. **Start launcher** — jalankan container Nginx reverse proxy
+4. **Start portal** — jalankan container Nginx reverse proxy
 
 ### Reverse proxy
 
@@ -94,7 +94,7 @@ Nginx dilengkapi:
 
 ```bash
 # Pastikan Docker & Docker Compose tersedia
-chmod +x launcher.sh launcher/scripts/*.sh
+chmod +x launcher.sh main/scripts/*.sh
 
 # Menu interaktif (default)
 ./launcher.sh
@@ -103,7 +103,7 @@ chmod +x launcher.sh launcher/scripts/*.sh
 ./launcher.sh start
 ```
 
-Buka **http://localhost:8080** — halaman launcher menampilkan semua aplikasi yang terdeteksi.
+Buka **http://localhost:8080** — halaman portal menampilkan semua aplikasi yang terdeteksi.
 
 ## Menu interaktif
 
@@ -111,27 +111,26 @@ Jalankan tanpa argumen atau `./launcher.sh menu`:
 
 | Menu | Fungsi |
 |------|--------|
-| **Run** | Pilih app (`all` / nomor / `1,3`), opsional jalankan launcher nginx |
-| **Stop** | Stop app yang running; `L` untuk launcher saja |
+| **Run** | Pilih app (`all` / nomor / `1,3`), opsional jalankan nginx portal |
+| **Stop** | Stop app yang running; `L` untuk nginx portal saja |
 | **Restart** | Restart app terpilih |
 | **Logs** | `docker compose logs -f` untuk satu app |
 | **Apps** | Daftar semua folder di `apps/` + status |
-| **Setup** | Wizard `.env` — pilih app yang belum dikonfigurasi, isi `APP_NAME` & `PORT_APP` |
-| **Status** | Status container launcher + apps |
+| **Setup** | Wizard `.env` — tanya nama & port per app |
+| **Status** | Status container portal + apps |
 | **Reload** | Rescan + regenerate nginx |
 
 ### Setup wizard
 
-Menu **Setup** menanyakan secara interaktif untuk setiap aplikasi:
+Menu **Setup** menanyakan secara interaktif:
 
-1. **Nama aplikasi** — tampilan di launcher (wajib)
+1. **Nama aplikasi** — tampilan di portal (wajib)
 2. **Port aplikasi** — port host, disarankan otomatis & dicek bentrok (wajib)
 
 Alur:
 
 - Folder di `apps/` tanpa `.env` → pilih dari daftar (atau `0` untuk app baru)
-- Setiap app yang dipilih → prompt **Nama aplikasi** lalu **Port aplikasi**
-- App baru → tanya **Nama aplikasi** & **Port aplikasi** saja; folder `apps/` dibuat otomatis dari nama (mis. `Point Of Sale` → `point-of-sale`)
+- App baru → folder `apps/` dibuat otomatis dari nama (mis. `Point Of Sale` → `point-of-sale`)
 - File `.env` dibuat otomatis (`APP_PATH` = nama folder)
 - Opsional: scan + reload nginx di akhir
 
@@ -142,8 +141,8 @@ Alur:
 | `./launcher.sh` | Menu interaktif |
 | `./launcher.sh menu` | Menu interaktif |
 | `./launcher.sh setup` | Wizard setup `.env` |
-| `./launcher.sh start` | Scan, generate, start semua app + launcher |
-| `./launcher.sh stop` | Stop launcher dan semua app |
+| `./launcher.sh start` | Scan, generate, start semua app + nginx portal |
+| `./launcher.sh stop` | Stop portal dan semua app |
 | `./launcher.sh restart` | Stop lalu start ulang |
 | `./launcher.sh reload` | Rescan, regenerate config, reload Nginx |
 | `./launcher.sh scan` | Scan + generate config saja (tanpa start) |
@@ -160,11 +159,11 @@ Alur:
 ./launcher.sh reload
 ```
 
-Tidak perlu edit manual `nginx.conf` atau `launcher/docker-compose.yml`.
+Tidak perlu edit manual `main/nginx.conf` atau `main/docker-compose.yml`.
 
-## Konfigurasi launcher
+## Konfigurasi portal
 
-File `launcher/.env`:
+File `main/.env`:
 
 ```env
 LAUNCHER_PORT=8080
